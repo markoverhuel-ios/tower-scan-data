@@ -572,17 +572,30 @@ def write_index(stage_path: str, out_dir: str, work_dir: str) -> dict:
     t.execute("PRAGMA journal_mode=OFF")
     t.execute("""CREATE TABLE lookup(
         key TEXT NOT NULL, kind TEXT NOT NULL, label TEXT,
-        lat REAL NOT NULL, lon REAL NOT NULL)""")
+        lat REAL NOT NULL, lon REAL NOT NULL, place TEXT)""")
     t.execute("ATTACH DATABASE ? AS s", (stage_path,))
+    # One row per call sign + category, at its primary site: ULS location
+    # #1, or the strongest broadcast facility (so a main station wins over
+    # its own translators/boosters). Never average locations together.
     t.execute("""
         INSERT INTO lookup
-        SELECT upper(call), cat, coalesce(licensee, ''), avg(lat), avg(lon)
-        FROM s.site WHERE call IS NOT NULL
-        GROUP BY upper(call), cat
+        SELECT upper(call), cat, coalesce(licensee, ''), lat, lon,
+               trim(coalesce(city, '') || ', ' || coalesce(state, ''), ', ')
+        FROM (
+          SELECT call, cat, licensee, lat, lon, city, state,
+                 row_number() OVER (
+                   PARTITION BY upper(call), cat
+                   ORDER BY coalesce(loc, 0),
+                            coalesce(json_extract(extra, '$.erpKW'), json_extract(extra, '$.powerKW'), 0) DESC
+                 ) AS rn
+          FROM s.site WHERE call IS NOT NULL
+        ) WHERE rn = 1
     """)
     t.execute("""
         INSERT INTO lookup
-        SELECT CAST(id AS TEXT), 'asr', coalesce(owner, ''), lat, lon FROM s.asr
+        SELECT CAST(id AS TEXT), 'asr', coalesce(owner, ''), lat, lon,
+               trim(coalesce(city, '') || ', ' || coalesce(state, ''), ', ')
+        FROM s.asr
     """)
     t.commit()
     t.execute("DETACH DATABASE s")
