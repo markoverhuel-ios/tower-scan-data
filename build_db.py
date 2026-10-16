@@ -622,18 +622,29 @@ def build_carrier_layer(args, stage_path: str) -> dict | None:
 
     path = args.opencellid_file
     source_date = args.opencellid_source_date
+    token = ""
     if not path:
         token = os.environ.get("OPENCELLID_TOKEN", "").strip()
         if not token:
             log("carriers: no OPENCELLID_TOKEN or --opencellid-file, skipping carrier layer")
             return None
-        url = os.environ.get("OPENCELLID_URL") or cells.DEFAULT_URL
-        path = cells.download_opencellid(token, os.path.join(args.raw, "cell_towers.csv.gz"), url)
-        source_date = source_date or dt.date.today().isoformat()
-    if not source_date:
-        source_date = dt.date.fromtimestamp(os.path.getmtime(path)).isoformat()
-    carriers = os.path.join(os.path.dirname(os.path.abspath(__file__)), "carriers.json")
-    return cells.build_cells(stage_path, path, carriers, args.out, args.work, source_date)
+    try:
+        if not path:
+            url = os.environ.get("OPENCELLID_URL") or cells.DEFAULT_URL
+            path = cells.download_opencellid(token, os.path.join(args.raw, "cell_towers.csv.gz"), url)
+            source_date = source_date or dt.date.today().isoformat()
+        if not source_date:
+            source_date = dt.date.fromtimestamp(os.path.getmtime(path)).isoformat()
+        carriers = os.path.join(os.path.dirname(os.path.abspath(__file__)), "carriers.json")
+        return cells.build_cells(stage_path, path, carriers, args.out, args.work, source_date)
+    except Exception as e:  # noqa: BLE001
+        if args.opencellid_file:
+            raise  # an explicitly requested local build should fail loudly
+        # The carrier layer is optional: a bad token or an OpenCellID outage must
+        # not stop the weekly FCC release. Say so loudly and never print the token.
+        msg = str(e).replace(token, "***") if token else str(e)
+        print(f"::warning title=Carrier layer skipped::{type(e).__name__}: {msg}", flush=True)
+        return None
 
 
 def cells_only(args) -> int:

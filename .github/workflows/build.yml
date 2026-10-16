@@ -25,12 +25,19 @@ jobs:
           python-version: "3.12"
 
       - name: Build tiles
+        env:
+          # Optional. Without it the FCC data still builds; the OpenCellID
+          # carrier layer is skipped (see cells.py). Never echoed.
+          OPENCELLID_TOKEN: ${{ secrets.OPENCELLID_TOKEN }}
         run: |
           DATE="$(date -u +%Y-%m-%d)"
           TAG="data-$(date -u +%Y-%m-%d-%H%M)"
           echo "TAG=$TAG" >> "$GITHUB_ENV"
           python build_db.py --raw raw --work work --out out --version "$DATE" \
             --base-url "https://github.com/${{ github.repository }}/releases/download/$TAG/"
+
+      - name: Unit tests
+        run: python -m unittest test_cells
 
       - name: Sanity check
         run: python check_output.py out
@@ -43,7 +50,7 @@ jobs:
           # releases/latest/download/manifest.json only ever points at a
           # complete set of files.
           gh release create "$TAG" --draft --title "FCC data $TAG" \
-            --notes "Weekly Tower Scan data build from FCC public files. See README." out/*.sqlz
+            --notes "Weekly Tower Scan data build. FCC tiles: US government public data. cells_*.sqlz (if present): derived from OpenCellID, CC BY-SA 4.0. See DATA-LICENSES.md." out/*.sqlz
           gh release upload "$TAG" out/manifest.json
           gh release edit "$TAG" --draft=false --latest
 

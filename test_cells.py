@@ -140,5 +140,56 @@ class MatchTests(unittest.TestCase):
             self.assertEqual(cells.to_rows(agg, {1: (lat, lon)}, "d")[0][-1], expect)
 
 
+class DownloadTests(unittest.TestCase):
+    class FakeResponse:
+        def __init__(self, body: bytes):
+            self.body, self.pos = body, 0
+        def read(self, n=-1):
+            chunk = self.body[self.pos:] if n < 0 else self.body[self.pos:self.pos + n]
+            self.pos += len(chunk)
+            return chunk
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    def test_json_error_with_http_200_is_rejected_and_token_not_leaked(self):
+        import tempfile, os
+        from unittest import mock
+        body = b'{"status":"error","message":"INVALID_TOKEN"}'
+        with tempfile.TemporaryDirectory() as d, \
+                mock.patch("urllib.request.urlopen", return_value=self.FakeResponse(body)):
+            dest = os.path.join(d, "cell_towers.csv.gz")
+            with self.assertRaises(RuntimeError) as ctx:
+                cells.download_opencellid("SECRET-TOKEN-123", dest)
+            self.assertIn("INVALID_TOKEN", str(ctx.exception))
+            self.assertNotIn("SECRET-TOKEN-123", str(ctx.exception))
+            self.assertFalse(os.path.exists(dest))
+            self.assertFalse(os.path.exists(dest + ".part"))
+
+    def test_build_degrades_to_no_layer_when_download_fails(self):
+        import argparse, io, contextlib, os
+        from unittest import mock
+        import build_db
+        args = argparse.Namespace(opencellid_file=None, opencellid_source_date=None,
+                                  raw="/nonexistent", work="/nonexistent", out="/nonexistent")
+        buf = io.StringIO()
+        with mock.patch.dict(os.environ, {"OPENCELLID_TOKEN": "SECRET-TOKEN-123"}), \
+                mock.patch("cells.download_opencellid", side_effect=RuntimeError("boom SECRET-TOKEN-123")), \
+                contextlib.redirect_stdout(buf):
+            result = build_db.build_carrier_layer(args, "/nonexistent")
+        self.assertIsNone(result)
+        out = buf.getvalue()
+        self.assertIn("::warning", out)
+        self.assertNotIn("SECRET-TOKEN-123", out)
+
+    def test_no_token_means_no_layer_and_no_error(self):
+        import argparse, os
+        from unittest import mock
+        import build_db
+        args = argparse.Namespace(opencellid_file=None, opencellid_source_date=None,
+                                  raw="x", work="x", out="x")
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertIsNone(build_db.build_carrier_layer(args, "x"))
+
+
 if __name__ == "__main__":
     unittest.main()
