@@ -30,7 +30,19 @@ for t in list(m["tiles"].values()) + [m["index"]]:
     if not os.path.exists(os.path.join(out, t["file"])):
         problems.append(f"missing file {t['file']}")
 
+# The carrier layer is optional, but if it's there it must be sane.
+cells = m.get("cells")
+if cells:
+    if cells.get("license") != "CC BY-SA 4.0" or not cells.get("attribution"):
+        problems.append("cells: missing license/attribution in manifest")
+    if not cells["tiles"]:
+        problems.append("cells: layer present but has no tiles")
+    for t in cells["tiles"].values():
+        if not os.path.exists(os.path.join(out, t["file"])):
+            problems.append(f"missing file {t['file']}")
+
 if problems:
     print("Build looks wrong, not publishing:\n  " + "\n  ".join(problems))
     sys.exit(1)
-print(f"OK: {len(m['tiles'])} tiles, counts {m['counts']}")
+print(f"OK: {len(m['tiles'])} tiles, counts {m['counts']}"
+      + (f", carrier rows {cells['stats']['rowsOut']:,}" if cells else ", no carrier layer"))
