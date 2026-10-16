@@ -24,23 +24,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      # OpenCellID allows only 2 downloads per file per day, so re-runs the same
-      # day (retries, manual runs) reuse the cached file instead of hitting the limit.
-      - name: Today's date (cache key)
-        id: day
-        run: echo "date=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
-
-      - name: Restore OpenCellID download
-        uses: actions/cache@v4
-        with:
-          path: raw/cell_towers.csv.gz
-          key: opencellid-${{ steps.day.outputs.date }}
-
       - name: Build tiles
-        env:
-          # Optional. Without it the FCC data still builds; the OpenCellID
-          # carrier layer is skipped (see cells.py). Never echoed.
-          OPENCELLID_TOKEN: ${{ secrets.OPENCELLID_TOKEN }}
         run: |
           DATE="$(date -u +%Y-%m-%d)"
           TAG="data-$(date -u +%Y-%m-%d-%H%M)"
@@ -49,7 +33,7 @@ jobs:
             --base-url "https://github.com/${{ github.repository }}/releases/download/$TAG/"
 
       - name: Unit tests
-        run: python -m unittest test_cells test_dof
+        run: python -m unittest test_dof
 
       - name: Sanity check
         run: python check_output.py out
@@ -71,7 +55,7 @@ jobs:
             return 1
           }
           gh release create "$TAG" --draft --title "FCC data $TAG" \
-            --notes "Weekly Tower Scan data build. FCC tiles: US government public data. cells.sqlz (if present): derived from OpenCellID, CC BY-SA 4.0. See DATA-LICENSES.md."
+            --notes "Weekly Tower Scan data build. FCC tiles: US government public data. See DATA-LICENSES.md."
           files=(out/*.sqlz)
           for ((i = 0; i < ${#files[@]}; i += 25)); do
             upload "${files[@]:i:25}"

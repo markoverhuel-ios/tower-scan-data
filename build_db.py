@@ -14,8 +14,6 @@ Output (in --out):
   tile_<lat>_<lon>.sqlz   one raw-DEFLATE-compressed SQLite DB per TILE_DEG square
   index.sqlz              call sign / ASR number -> coordinates, for search
                           (tiles also carry the FAA Digital Obstacle File: see dof.py)
-  cells.sqlz              OPTIONAL carrier layer from OpenCellID (CC BY-SA 4.0),
-                          see cells.py; kept apart from the FCC tiles on purpose
   manifest.json           what exists, sizes, and where to download it
 
 Field positions were checked against the real files (see README.md).
@@ -661,61 +659,6 @@ def write_index(stage_path: str, out_dir: str, work_dir: str) -> dict:
     return {"file": "index.sqlz", "bytes": size, "sha256": sha256(dest), "rows": n}
 
 
-def build_carrier_layer(args, stage_path: str) -> dict | None:
-    """OpenCellID carrier layer (see cells.py). Optional: with no token and no
-    file the FCC data still builds, just without carriers."""
-    here = os.path.dirname(os.path.abspath(__file__))
-    if here not in sys.path:  # `python -I` leaves the script's folder off the path
-        sys.path.insert(0, here)
-    import cells
-
-    path = args.opencellid_file
-    source_date = args.opencellid_source_date
-    token = ""
-    if not path:
-        token = os.environ.get("OPENCELLID_TOKEN", "").strip()
-        if not token:
-            log("carriers: no OPENCELLID_TOKEN or --opencellid-file, skipping carrier layer")
-            return None
-    try:
-        if not path:
-            url = os.environ.get("OPENCELLID_URL") or cells.DEFAULT_URL
-            path = cells.download_opencellid(token, os.path.join(args.raw, "cell_towers.csv.gz"), url)
-            source_date = source_date or dt.date.today().isoformat()
-        if not source_date:
-            source_date = dt.date.fromtimestamp(os.path.getmtime(path)).isoformat()
-        carriers = os.path.join(os.path.dirname(os.path.abspath(__file__)), "carriers.json")
-        return cells.build_cells(stage_path, path, carriers, args.out, args.work, source_date)
-    except Exception as e:  # noqa: BLE001
-        if args.opencellid_file:
-            raise  # an explicitly requested local build should fail loudly
-        # The carrier layer is optional: a bad token or an OpenCellID outage must
-        # not stop the weekly FCC release. Say so loudly and never print the token.
-        msg = str(e).replace(token, "***") if token else str(e)
-        print(f"::warning title=Carrier layer skipped::{type(e).__name__}: {msg}", flush=True)
-        return None
-
-
-def cells_only(args) -> int:
-    stage_path = os.path.join(args.work, "stage.sqlite")
-    manifest_path = os.path.join(args.out, "manifest.json")
-    if not (os.path.exists(stage_path) and os.path.exists(manifest_path)):
-        sys.exit("--cells-only needs work/stage.sqlite and out/manifest.json from a full build")
-    for f in os.listdir(args.out):
-        if f.startswith("cells"):
-            os.remove(os.path.join(args.out, f))
-    block = build_carrier_layer(args, stage_path)
-    with open(manifest_path) as f:
-        manifest = json.load(f)
-    manifest.pop("cells", None)
-    if block:
-        manifest["cells"] = block
-    manifest["baseURL"] = args.base_url
-    with open(manifest_path, "w") as f:
-        json.dump(manifest, f, separators=(",", ":"))
-    return 0
-
-
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--raw", default="raw", help="where FCC downloads are cached")
@@ -725,17 +668,10 @@ def main() -> int:
                     help="URL prefix the app downloads tile files from (ends with /)")
     ap.add_argument("--version", default=dt.date.today().isoformat())
     ap.add_argument("--skip-broadcast", action="store_true")
-    ap.add_argument("--opencellid-file", help="local OpenCellID cell_towers.csv(.gz) to use instead of downloading")
-    ap.add_argument("--opencellid-source-date", help="export date of --opencellid-file (YYYY-MM-DD); default: file date")
-    ap.add_argument("--cells-only", action="store_true",
-                    help="reuse work/stage.sqlite and out/manifest.json; just (re)build the carrier layer")
     args = ap.parse_args()
 
     for d in (args.raw, args.work, args.out):
         os.makedirs(d, exist_ok=True)
-
-    if args.cells_only:
-        return cells_only(args)
 
     for f in os.listdir(args.out):
         os.remove(os.path.join(args.out, f))
@@ -758,8 +694,6 @@ def main() -> int:
     tiles = write_tiles(stage_path, args.out, args.work)
     index = write_index(stage_path, args.out, args.work)
 
-    cells_block = build_carrier_layer(args, stage_path)
-
     manifest = {
         "schema": SCHEMA_VERSION,
         "version": args.version,
@@ -772,8 +706,6 @@ def main() -> int:
     }
     if dof_block:
         manifest["dof"] = dof_block
-    if cells_block:
-        manifest["cells"] = cells_block
     with open(os.path.join(args.out, "manifest.json"), "w") as f:
         json.dump(manifest, f, separators=(",", ":"))
     total = sum(t["bytes"] for t in tiles.values())

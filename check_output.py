@@ -35,20 +35,8 @@ dof = m.get("dof")
 if dof and dof.get("rows", 0) < 400_000:
     problems.append(f"dof: only {dof.get('rows', 0):,} obstacles, expected ~630,000")
 
-# The carrier layer is optional, but if it's there it must be sane.
-cells = m.get("cells")
-if cells:
-    if cells.get("license") != "CC BY-SA 4.0" or not cells.get("attribution"):
-        problems.append("cells: missing license/attribution in manifest")
-    f = cells.get("file") or {}
-    if not f.get("file") or not os.path.exists(os.path.join(out, f["file"])):
-        problems.append("cells: layer present but its file is missing")
-    elif f.get("rows", 0) < 500:
-        problems.append(f"cells: only {f.get('rows', 0)} rows, expected at least ~1,000")
-
 if problems:
     print("Build looks wrong, not publishing:\n  " + "\n  ".join(problems))
     sys.exit(1)
 print(f"OK: {len(m['tiles'])} tiles, counts {m['counts']}"
-      + (f", carrier rows {cells['stats']['rowsOut']:,}" if cells else ", no carrier layer")
       + (f", {dof['rows']:,} FAA obstacles" if dof else ", no FAA obstacle layer"))
