@@ -1,0 +1,59 @@
+name: Build FCC data
+
+on:
+  schedule:
+    # The FCC refreshes its "complete" ULS/ASR files weekly (Sunday night).
+    - cron: "0 10 * * 2"   # Tuesdays 10:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-data
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build tiles
+        run: |
+          DATE="$(date -u +%Y-%m-%d)"
+          TAG="data-$DATE"
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          python build_db.py --raw raw --work work --out out --version "$DATE" \
+            --base-url "https://github.com/${{ github.repository }}/releases/download/$TAG/"
+
+      - name: Sanity check
+        run: python check_output.py out
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete "$TAG" --yes --cleanup-tag 2>/dev/null || true
+          # Upload everything to a draft first, then publish, so the app's
+          # releases/latest/download/manifest.json only ever points at a
+          # complete set of files.
+          gh release create "$TAG" --draft --title "FCC data $TAG" \
+            --notes "Weekly Tower Scan data build from FCC public files. See README." out/*.sqlz
+          gh release upload "$TAG" out/manifest.json
+          gh release edit "$TAG" --draft=false --latest
+
+      - name: Prune old releases (keep 3)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release list --limit 100 --json tagName,createdAt \
+            -q 'sort_by(.createdAt) | reverse | .[3:] | .[].tagName' |
+          while read -r tag; do
+            gh release delete "$tag" --yes --cleanup-tag
+          done
