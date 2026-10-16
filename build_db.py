@@ -693,6 +693,12 @@ def main() -> int:
 
     tiles = write_tiles(stage_path, args.out, args.work)
     index = write_index(stage_path, args.out, args.work)
+    areas_info = None
+    try:
+        import areas
+        areas_info = areas.build(args.raw, args.work, args.out)
+    except Exception as e:  # noqa: BLE001 - area licenses are an extra; never block the weekly release
+        log(f"areas: skipped ({e})")
 
     manifest = {
         "schema": SCHEMA_VERSION,
@@ -706,6 +712,8 @@ def main() -> int:
     }
     if dof_block:
         manifest["dof"] = dof_block
+    if areas_info:
+        manifest["areas"] = areas_info
     with open(os.path.join(args.out, "manifest.json"), "w") as f:
         json.dump(manifest, f, separators=(",", ":"))
     total = sum(t["bytes"] for t in tiles.values())

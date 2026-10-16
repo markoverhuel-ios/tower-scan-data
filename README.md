@@ -10,6 +10,7 @@ The app code lives elsewhere. This repo holds only the build script and the week
 | `manifest.json` | Data version, tile list, sizes, SHA-256s, download base URL |
 | `tile_<lat>_<lon>.sqlz` | One 2°×2° square of data: raw-DEFLATE-compressed SQLite |
 | `index.sqlz` | Nationwide call sign / ASR number → coordinates, for search |
+| `areas.sqlz` | Market-area licenses, market → county lists and county outlines |
 
 The app reads `releases/latest/download/manifest.json` and downloads only the tiles for the areas the user searches.
 
@@ -25,7 +26,7 @@ All public FCC data:
   HD, EN, LO, FR, EM and PA records. Active licenses only. Fixed and temporary-fixed locations only, because mobile and itinerant areas aren't sites.
 - **Broadcast**: FCC FM / TV / AM query (`transition.fcc.gov/fcc-bin/{fmq,tvq,amq}`), pipe-delimited output, LIC and STA records only.
 
-Market-area licenses (AWS, PCS, 700 MHz blocks) have no transmitter coordinates in ULS, so they aren't included.
+Market-area licenses (PCS, AWS, 700 MHz, 3.5 GHz and others) have no transmitter coordinates, so they go into a separate `areas.sqlz` (see `areas.py`): the licenses from `l_market.zip`, which counties make up each market (FCC county cross-reference, PEA workbook), and Census 2017 county outlines. A market is drawn as the union of its counties.
 
 ## Field positions (0-based, checked against real files 2026-10-15)
 

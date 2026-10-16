@@ -26,9 +26,15 @@ for key, minimum in MINIMUMS.items():
         problems.append(f"{key}: {got:,} < {minimum:,}")
 if len(m["tiles"]) < MIN_TILES:
     problems.append(f"tiles: {len(m['tiles'])} < {MIN_TILES}")
-for t in list(m["tiles"].values()) + [m["index"]]:
+for t in list(m["tiles"].values()) + [m["index"]] + ([m["areas"]] if "areas" in m else []):
     if not os.path.exists(os.path.join(out, t["file"])):
         problems.append(f"missing file {t['file']}")
+
+# Area licenses are optional (the build skips them if the FCC boundary files are unreachable),
+# but a half-built set isn't.
+areas = m.get("areas")
+if areas and areas.get("rows", 0) < 80_000:
+    problems.append(f"areas: only {areas.get('rows', 0):,} licenses, expected ~105,000")
 
 # The FAA obstacle layer is optional too, but a half-built one isn't.
 dof = m.get("dof")
