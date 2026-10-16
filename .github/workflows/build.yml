@@ -48,10 +48,24 @@ jobs:
         run: |
           # Upload everything to a draft first, then publish, so the app's
           # releases/latest/download/manifest.json only ever points at a
-          # complete set of files.
+          # complete set of files. Uploads go in small batches with retries:
+          # GitHub's secondary rate limit rejects a burst of hundreds of uploads.
+          upload() {
+            for attempt in 1 2 3 4 5 6; do
+              if gh release upload "$TAG" --clobber "$@"; then return 0; fi
+              echo "upload failed (attempt $attempt); waiting before retry"
+              sleep $((attempt * 45))
+            done
+            return 1
+          }
           gh release create "$TAG" --draft --title "FCC data $TAG" \
-            --notes "Weekly Tower Scan data build. FCC tiles: US government public data. cells_*.sqlz (if present): derived from OpenCellID, CC BY-SA 4.0. See DATA-LICENSES.md." out/*.sqlz
-          gh release upload "$TAG" out/manifest.json
+            --notes "Weekly Tower Scan data build. FCC tiles: US government public data. cells.sqlz (if present): derived from OpenCellID, CC BY-SA 4.0. See DATA-LICENSES.md."
+          files=(out/*.sqlz)
+          for ((i = 0; i < ${#files[@]}; i += 25)); do
+            upload "${files[@]:i:25}"
+            sleep 4
+          done
+          upload out/manifest.json
           gh release edit "$TAG" --draft=false --latest
 
       - name: Prune old releases (keep 3)

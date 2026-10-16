@@ -35,11 +35,11 @@ cells = m.get("cells")
 if cells:
     if cells.get("license") != "CC BY-SA 4.0" or not cells.get("attribution"):
         problems.append("cells: missing license/attribution in manifest")
-    if not cells["tiles"]:
-        problems.append("cells: layer present but has no tiles")
-    for t in cells["tiles"].values():
-        if not os.path.exists(os.path.join(out, t["file"])):
-            problems.append(f"missing file {t['file']}")
+    f = cells.get("file") or {}
+    if not f.get("file") or not os.path.exists(os.path.join(out, f["file"])):
+        problems.append("cells: layer present but its file is missing")
+    elif f.get("rows", 0) < 1000:
+        problems.append(f"cells: only {f.get('rows', 0)} rows, expected thousands")
 
 if problems:
     print("Build looks wrong, not publishing:\n  " + "\n  ".join(problems))

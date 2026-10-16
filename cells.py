@@ -8,7 +8,7 @@ licensed CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/).
 This is NOT FCC data and it is kept apart from the FCC tiles on purpose:
 CC BY-SA is ShareAlike, so anything derived from OpenCellID has to stay
 under CC BY-SA, while the FCC tiles are public-domain US government data.
-Output goes to separate `cells_<tile>.sqlz` files, each row marked with its
+Output goes to a separate `cells.sqlz` file, each row marked with its
 source, and the manifest carries the attribution text the app must show.
 
 How a carrier gets "assumed" onto a tower:
@@ -305,36 +305,31 @@ def _sha256(path: str) -> str:
     return h.hexdigest()
 
 
-def write_cell_tiles(rows: list[tuple], out_dir: str, work_dir: str, source_date: str) -> dict:
-    by_tile: dict[str, list[tuple]] = defaultdict(list)
-    for r in rows:
-        by_tile[r[-1]].append(r)
-    tiles = {}
-    for key, tile_rows in sorted(by_tile.items()):
-        tmp = os.path.join(work_dir, f"cells_{key}.sqlite")
-        if os.path.exists(tmp):
-            os.remove(tmp)
-        db = sqlite3.connect(tmp)
-        db.execute("PRAGMA journal_mode=OFF")
-        db.executescript(CELL_SCHEMA)
-        db.executemany("INSERT INTO cell_tenant VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", tile_rows)
-        db.executemany("INSERT INTO meta VALUES (?,?)", [
-            ("source", SOURCE), ("license", LICENSE), ("license_url", LICENSE_URL),
-            ("source_url", SOURCE_URL), ("attribution", ATTRIBUTION),
-            ("changes", CHANGES), ("source_date", source_date),
-        ])
-        db.commit()
-        db.execute("VACUUM")
-        db.close()
-        name = f"cells_{key}.sqlz"
-        dest = os.path.join(out_dir, name)
-        size = _compress(tmp, dest)
+def write_cells_file(rows: list[tuple], out_dir: str, work_dir: str, source_date: str) -> dict:
+    """One small file for the whole country (~12k rows), not one per tile: it keeps
+    the release's asset count down, and the app downloads it once."""
+    tmp = os.path.join(work_dir, "cells.sqlite")
+    if os.path.exists(tmp):
         os.remove(tmp)
-        tiles[key] = {"file": name, "bytes": size, "sha256": _sha256(dest), "rows": len(tile_rows)}
-    return tiles
+    db = sqlite3.connect(tmp)
+    db.execute("PRAGMA journal_mode=OFF")
+    db.executescript(CELL_SCHEMA)
+    db.executemany("INSERT INTO cell_tenant VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
+    db.executemany("INSERT INTO meta VALUES (?,?)", [
+        ("source", SOURCE), ("license", LICENSE), ("license_url", LICENSE_URL),
+        ("source_url", SOURCE_URL), ("attribution", ATTRIBUTION),
+        ("changes", CHANGES), ("source_date", source_date),
+    ])
+    db.commit()
+    db.execute("VACUUM")
+    db.close()
+    dest = os.path.join(out_dir, "cells.sqlz")
+    size = _compress(tmp, dest)
+    os.remove(tmp)
+    return {"file": "cells.sqlz", "bytes": size, "sha256": _sha256(dest), "rows": len(rows)}
 
 
-def manifest_block(tiles: dict, source_date: str, stats: dict) -> dict:
+def manifest_block(file_info: dict, source_date: str, stats: dict) -> dict:
     return {
         "source": SOURCE,
         "license": LICENSE,
@@ -344,7 +339,7 @@ def manifest_block(tiles: dict, source_date: str, stats: dict) -> dict:
         "changes": CHANGES,
         "sourceDate": source_date,
         "stats": stats,
-        "tiles": tiles,
+        "file": file_info,
     }
 
 
@@ -358,10 +353,11 @@ def build_cells(stage_path: str, csv_path: str, carriers_path: str,
     rows = to_rows(agg, towers, source_date)
     log(f"cells: {stats['us']:,} US cells, {stats['usable']:,} usable, "
         f"{stats['matched']:,} matched -> {len(rows):,} tower/carrier rows")
-    tiles = write_cell_tiles(rows, out_dir, work_dir, source_date)
+    file_info = write_cells_file(rows, out_dir, work_dir, source_date)
     stats["rowsOut"] = len(rows)
     stats["towersWithCarriers"] = len({k[0] for k in agg})
-    return manifest_block(tiles, source_date, stats)
+    log(f"cells: cells.sqlz {file_info['bytes'] / 1e3:.0f} KB, {stats['towersWithCarriers']:,} towers with carriers")
+    return manifest_block(file_info, source_date, stats)
 
 
 if __name__ == "__main__":

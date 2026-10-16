@@ -13,7 +13,7 @@ Sources (all public FCC data):
 Output (in --out):
   tile_<lat>_<lon>.sqlz   one raw-DEFLATE-compressed SQLite DB per TILE_DEG square
   index.sqlz              call sign / ASR number -> coordinates, for search
-  cells_<lat>_<lon>.sqlz  OPTIONAL carrier layer from OpenCellID (CC BY-SA 4.0),
+  cells.sqlz              OPTIONAL carrier layer from OpenCellID (CC BY-SA 4.0),
                           see cells.py; kept apart from the FCC tiles on purpose
   manifest.json           what exists, sizes, and where to download it
 
@@ -653,7 +653,7 @@ def cells_only(args) -> int:
     if not (os.path.exists(stage_path) and os.path.exists(manifest_path)):
         sys.exit("--cells-only needs work/stage.sqlite and out/manifest.json from a full build")
     for f in os.listdir(args.out):
-        if f.startswith("cells_"):
+        if f.startswith("cells"):
             os.remove(os.path.join(args.out, f))
     block = build_carrier_layer(args, stage_path)
     with open(manifest_path) as f:

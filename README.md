@@ -125,7 +125,7 @@ is unaffected without one.
   30 m of it. Everything else that matched is `possible`. Towers within 30 m of each other can't be told
   apart given the position noise, so each of them gets the cell, as `possible`.
 - Most cell sites sit on structures too short to need an ASR, so most cells won't match any tower. That's expected.
-- Output is separate files (`cells_<tile>.sqlz`, a few KB each) plus a `cells` block in `manifest.json`.
+- Output is one small separate file (`cells.sqlz`) plus a `cells` block in `manifest.json`.
   Rows carry `source` and `source_date`. See [DATA-LICENSES.md](DATA-LICENSES.md).
 
 **Setup (once):**
