@@ -38,8 +38,8 @@ if cells:
     f = cells.get("file") or {}
     if not f.get("file") or not os.path.exists(os.path.join(out, f["file"])):
         problems.append("cells: layer present but its file is missing")
-    elif f.get("rows", 0) < 1000:
-        problems.append(f"cells: only {f.get('rows', 0)} rows, expected thousands")
+    elif f.get("rows", 0) < 500:
+        problems.append(f"cells: only {f.get('rows', 0)} rows, expected at least ~1,000")
 
 if problems:
     print("Build looks wrong, not publishing:\n  " + "\n  ".join(problems))

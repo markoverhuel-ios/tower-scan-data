@@ -19,7 +19,7 @@ def offset(lat, lon, north_m=0.0, east_m=0.0):
             lon + east_m / (111_320.0 * math.cos(math.radians(lat))))
 
 
-def row(mcc, mnc, lat, lon, samples=10, radio="LTE", rng=1000, updated=1_760_000_000):
+def row(mcc, mnc, lat, lon, samples=80, radio="LTE", rng=1000, updated=1_760_000_000):
     # radio,mcc,net,area,cell,unit,lon,lat,range,samples,changeable,created,updated,averageSignal
     return [radio, mcc, mnc, "1", "1", "", str(lon), str(lat), str(rng), str(samples),
             "1", "1600000000", str(updated), "0"]
@@ -44,13 +44,45 @@ class MatchTests(unittest.TestCase):
         self.assertEqual(agg, {})
         self.assertEqual(stats["matched"], 0)
 
-    def test_medium_distance_is_possible_not_likely(self):
-        agg, _ = self.run_match([(1, LAT, LON)], [row("310", "410", *offset(LAT, LON, 120, 0))])
-        self.assertEqual(cells.confidence(agg[(1, "AT&T")]), "possible")
+    def test_evidence_decides_the_label(self):
+        # (samples, metres away) -> expected label; calibrated on real data (see cells.py)
+        cases = [
+            (80, 20, "likely"),      # many measurements, close
+            (80, 85, "likely"),
+            (80, 120, None),         # too far, however well measured
+            (30, 20, "possible"),    # 20-59 measurements: about a coin flip
+            (30, 85, "possible"),
+            (19, 10, None),          # <20 measurements: mostly chance
+            (5, 5, None),
+        ]
+        for samples, metres, expected in cases:
+            with self.subTest(samples=samples, metres=metres):
+                agg, _ = self.run_match([(1, LAT, LON)],
+                                        [row("310", "410", *offset(LAT, LON, metres, 0), samples=samples)])
+                self.assertEqual(cells.confidence(agg[(1, "AT&T")]), expected)
 
-    def test_low_samples_never_likely(self):
-        agg, _ = self.run_match([(1, LAT, LON)], [row("310", "410", LAT, LON, samples=3)])
-        self.assertEqual(cells.confidence(agg[(1, "AT&T")]), "possible")
+    def test_samples_add_up_across_sectors(self):
+        # three sectors of 25 measurements each are 75 in total: enough for "likely"
+        rows = [row("310", "410", LAT, LON, samples=25) for _ in range(3)]
+        agg, _ = self.run_match([(1, LAT, LON)], rows)
+        self.assertEqual(cells.confidence(agg[(1, "AT&T")]), "likely")
+
+    def test_legacy_only_radios_are_dropped(self):
+        for radio in ("GSM", "UMTS", "CDMA"):
+            agg, _ = self.run_match([(1, LAT, LON)], [row("310", "410", LAT, LON, radio=radio)])
+            self.assertIsNone(cells.confidence(agg[(1, "AT&T")]), radio)
+
+    def test_legacy_radio_alongside_lte_is_kept(self):
+        rows = [row("310", "410", LAT, LON, radio="UMTS"), row("310", "410", LAT, LON, radio="LTE")]
+        agg, _ = self.run_match([(1, LAT, LON)], rows)
+        self.assertEqual(cells.confidence(agg[(1, "AT&T")]), "likely")
+
+    def test_dropped_rows_are_not_written(self):
+        weak = row("310", "410", LAT, LON, samples=5)
+        strong = row("311", "480", LAT, LON, samples=90)
+        agg, _ = self.run_match([(1, LAT, LON)], [weak, strong])
+        out = cells.to_rows(agg, {1: (LAT, LON)}, "2026-10-16")
+        self.assertEqual([r[1] for r in out], ["Verizon"])
 
     def test_single_measurement_cells_ignored(self):
         agg, _ = self.run_match([(1, LAT, LON)], [row("310", "410", LAT, LON, samples=1)])
@@ -70,6 +102,7 @@ class MatchTests(unittest.TestCase):
         self.assertEqual({k[0] for k in agg}, {1, 2})
         for a in agg.values():
             self.assertTrue(a["ambiguous"])
+            # plenty of measurements, but the towers can't be told apart: never "likely"
             self.assertEqual(cells.confidence(a), "possible")
 
     def test_neighbor_31m_away_is_not_left_empty(self):

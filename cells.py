@@ -52,12 +52,19 @@ CHANGES = (
     "grouped by carrier; carrier names derived from MCC/MNC."
 )
 
-# Tunables. Tune against real data (see README "Tuning the carrier match").
-MAX_DIST_M = 200.0       # farther than this from any ASR: not matched
-LIKELY_DIST_M = 60.0     # closest cell within this => candidate for "likely"
-LIKELY_MIN_SAMPLES = 10  # total measurements behind the carrier at the tower
-MIN_CELL_SAMPLES = 2     # single-measurement cells are mostly noise
-AMBIGUOUS_GAP_M = 30.0   # runner-up tower this close behind nearest => ambiguous
+# Tunables. Calibrated on the first real run (2026-10-16): of ~12k tower/carrier
+# matches within 200 m, only ~15% were real; the rest were an unrelated cell site
+# that happened to be nearby. Share that's real, by total measurements behind a row:
+#   <20 samples: 5-20%   |   20-59: ~40%   |   60+: ~95% (within 90 m)
+# so rows are kept/labelled by evidence, not just distance. Re-check with
+# tools/calibrate.py after changing anything or when OpenCellID's data shifts.
+MAX_DIST_M = 200.0          # candidate search radius (also used to detect near-twin towers)
+KEEP_DIST_M = 90.0          # farther than this: dropped
+KEEP_MIN_SAMPLES = 20       # fewer measurements than this: dropped (mostly chance)
+LIKELY_MIN_SAMPLES = 60     # at least this many, and not ambiguous => "likely"
+MIN_CELL_SAMPLES = 2        # single-measurement cells are noise before we even aggregate
+AMBIGUOUS_GAP_M = 30.0      # runner-up tower this close behind nearest => ambiguous
+LEGACY_RADIOS = {"GSM", "UMTS", "CDMA"}  # US 2G/3G networks are largely shut down
 
 GRID_DEG = 0.005         # spatial index cell; 3x3 neighbors cover >= 280 m
 TILE_DEG = 2             # must match build_db.TILE_DEG
@@ -242,9 +249,13 @@ def match_cells(rows, index: TowerIndex, carriers: dict[str, str],
     return agg, stats
 
 
-def confidence(a: dict) -> str:
-    if (a["dist"] <= LIKELY_DIST_M and a["samples"] >= LIKELY_MIN_SAMPLES
-            and not a["ambiguous"]):
+def confidence(a: dict) -> str | None:
+    """'likely', 'possible', or None when the evidence is too weak to show."""
+    if a["radios"] <= LEGACY_RADIOS:          # only 2G/3G: networks mostly sunset
+        return None
+    if a["dist"] > KEEP_DIST_M or a["samples"] < KEEP_MIN_SAMPLES:
+        return None
+    if a["samples"] >= LIKELY_MIN_SAMPLES and not a["ambiguous"]:
         return "likely"
     return "possible"
 
@@ -252,6 +263,9 @@ def confidence(a: dict) -> str:
 def to_rows(agg: dict, towers: dict[int, tuple[float, float]], source_date: str):
     out = []
     for (asr, carrier), a in agg.items():
+        conf = confidence(a)
+        if conf is None:
+            continue
         lat, lon = towers[asr]
         radios = sorted(a["radios"], key=lambda r: RADIO_ORDER.get(r, 9))
         updated = (dt.datetime.fromtimestamp(a["updated"], dt.timezone.utc).strftime("%Y-%m-%d")
@@ -260,7 +274,7 @@ def to_rows(agg: dict, towers: dict[int, tuple[float, float]], source_date: str)
             asr, carrier, ",".join(sorted(a["codes"])), ",".join(radios),
             a["cells"], a["samples"], int(round(a["dist"])),
             int(statistics.median(a["ranges"])) if a["ranges"] else None,
-            updated, confidence(a), SOURCE, source_date,
+            updated, conf, SOURCE, source_date,
             f"{math.floor(lat / TILE_DEG)}_{math.floor(lon / TILE_DEG)}",
         ))
     return out
@@ -351,8 +365,11 @@ def build_cells(stage_path: str, csv_path: str, carriers_path: str,
     index = TowerIndex([(a, la, lo) for a, (la, lo) in towers.items()])
     agg, stats = match_cells(read_rows(csv_path), index, carriers)
     rows = to_rows(agg, towers, source_date)
+    stats["candidates"] = len(agg)
+    stats["dropped"] = len(agg) - len(rows)
     log(f"cells: {stats['us']:,} US cells, {stats['usable']:,} usable, "
-        f"{stats['matched']:,} matched -> {len(rows):,} tower/carrier rows")
+        f"{stats['matched']:,} matched -> {len(agg):,} candidates -> {len(rows):,} kept "
+        f"({stats['dropped']:,} dropped as weak/legacy)")
     file_info = write_cells_file(rows, out_dir, work_dir, source_date)
     stats["rowsOut"] = len(rows)
     stats["towersWithCarriers"] = len({k[0] for k in agg})

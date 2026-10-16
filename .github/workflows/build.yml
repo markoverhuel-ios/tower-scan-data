@@ -69,11 +69,17 @@ jobs:
           gh release edit "$TAG" --draft=false --latest
 
       - name: Prune old releases (keep 3)
+        # Housekeeping only: GitHub sometimes answers 502 when deleting a release
+        # with hundreds of files. That must not mark a successful publish as failed.
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release list --limit 100 --json tagName,createdAt \
-            -q 'sort_by(.createdAt) | reverse | .[3:] | .[].tagName' |
+          gh release list --limit 100 --json tagName,createdAt,isDraft \
+            -q 'sort_by(.createdAt) | reverse | .[] | select(.isDraft or true) | .tagName' | tail -n +4 |
           while read -r tag; do
-            gh release delete "$tag" --yes --cleanup-tag
+            for attempt in 1 2 3; do
+              gh release delete "$tag" --yes --cleanup-tag && break
+              sleep $((attempt * 20))
+            done
           done
