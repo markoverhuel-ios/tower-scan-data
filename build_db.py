@@ -13,6 +13,7 @@ Sources (all public FCC data):
 Output (in --out):
   tile_<lat>_<lon>.sqlz   one raw-DEFLATE-compressed SQLite DB per TILE_DEG square
   index.sqlz              call sign / ASR number -> coordinates, for search
+                          (tiles also carry the FAA Digital Obstacle File: see dof.py)
   cells.sqlz              OPTIONAL carrier layer from OpenCellID (CC BY-SA 4.0),
                           see cells.py; kept apart from the FCC tiles on purpose
   manifest.json           what exists, sizes, and where to download it
@@ -92,6 +93,20 @@ CREATE TABLE site(
   extra TEXT,                    -- JSON with source-specific details
   tile TEXT NOT NULL
 );
+CREATE TABLE obstacle(
+  id TEXT PRIMARY KEY,           -- FAA OAS number, e.g. 01-063487
+  ver TEXT,                      -- 'O' verified, 'U' unverified
+  city TEXT, state TEXT,
+  lat REAL NOT NULL, lon REAL NOT NULL,
+  type TEXT, qty INTEGER,
+  agl REAL, amsl REAL,           -- metres
+  light TEXT, hacc TEXT, vacc TEXT, mark TEXT,   -- FAA DOF codes
+  study TEXT,                    -- FAA aeronautical study number, e.g. 2017-AGL-16359-OE
+  action TEXT, updated TEXT,     -- last action (A add / C change) and its date
+  asr INTEGER,                   -- linked ASR registration, when there is one
+  match TEXT,                    -- 'study' | 'near' | NULL
+  tile TEXT NOT NULL
+);
 CREATE TABLE freq(
   site INTEGER NOT NULL,
   mhz REAL, upper REAL, power REAL, erp REAL, cls TEXT, emis TEXT
@@ -112,6 +127,8 @@ CREATE INDEX site_ll ON site(lat, lon);
 CREATE INDEX site_asr ON site(asr);
 CREATE INDEX freq_site ON freq(site);
 CREATE INDEX path_tx ON path(tx_lat, tx_lon);
+CREATE INDEX obstacle_ll ON obstacle(lat, lon);
+CREATE INDEX obstacle_asr ON obstacle(asr);
 """
 
 
@@ -123,14 +140,14 @@ def log(msg: str) -> None:
 # Download helpers
 
 
-def download(url: str, dest: str, retries: int = 4) -> str:
+def download(url: str, dest: str, retries: int = 4, headers: dict | None = None) -> str:
     if os.path.exists(dest) and os.path.getsize(dest) > 0:
         log(f"cached {os.path.basename(dest)}")
         return dest
     for attempt in range(1, retries + 1):
         try:
             log(f"downloading {url}")
-            req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+            req = urllib.request.Request(url, headers=headers or {"User-Agent": USER_AGENT})
             with urllib.request.urlopen(req, timeout=600) as r, open(dest + ".part", "wb") as f:
                 while chunk := r.read(1 << 20):
                     f.write(chunk)
@@ -455,6 +472,35 @@ def load_broadcast(db: sqlite3.Connection, raw_dir: str) -> int:
     return total
 
 
+def load_dof(db: sqlite3.Connection, raw_dir: str) -> dict | None:
+    """FAA Digital Obstacle File (see dof.py). Optional: on any failure the build
+    carries on without obstacles rather than losing the FCC data."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    if here not in sys.path:
+        sys.path.insert(0, here)
+    import dof
+
+    try:
+        url = os.environ.get("DOF_URL") or dof.find_zip_url()
+        dest = os.path.join(raw_dir, os.path.basename(url))
+        download(url, dest, headers=dof.HEADERS)
+        currency, obstacles = dof.read_obstacles(dest)
+        log(f"DOF: {len(obstacles):,} US obstacles, currency {currency}")
+        asr_rows = db.execute("SELECT id, lat, lon, faa_study FROM asr").fetchall()
+        dof.link_to_asr(obstacles, asr_rows)
+        rows = dof.to_rows(obstacles, TILE_DEG)
+        db.executemany("INSERT OR REPLACE INTO obstacle VALUES (" + ",".join("?" * 20) + ")", rows)
+        db.commit()
+        by_study = sum(1 for o in obstacles if o["match"] == "study")
+        near = sum(1 for o in obstacles if o["match"] == "near")
+        log(f"DOF: linked to ASR {by_study:,} by study number, {near:,} by proximity")
+        return {"source": dof.SOURCE, "currency": currency, "url": url, "rows": len(rows),
+                "linkedByStudy": by_study, "linkedNear": near}
+    except Exception as e:  # noqa: BLE001
+        print(f"::warning title=FAA obstacle layer skipped::{type(e).__name__}: {e}", flush=True)
+        return None
+
+
 def finalize_stage(db: sqlite3.Connection) -> None:
     log("stage: attaching emissions to frequencies")
     db.execute("CREATE INDEX emis_k ON emis(site, mhz)")
@@ -531,7 +577,8 @@ def sha256(path: str) -> str:
 
 def write_tiles(stage_path: str, out_dir: str, work_dir: str) -> dict:
     stage = sqlite3.connect(stage_path)
-    keys = sorted({r[0] for r in stage.execute("SELECT tile FROM site UNION SELECT tile FROM asr")})
+    keys = sorted({r[0] for r in stage.execute(
+        "SELECT tile FROM site UNION SELECT tile FROM asr UNION SELECT tile FROM obstacle")})
     stage.close()
     tiles = {}
     for i, key in enumerate(keys, 1):
@@ -546,10 +593,12 @@ def write_tiles(stage_path: str, out_dir: str, work_dir: str) -> dict:
         t.execute("INSERT INTO site SELECT * FROM s.site WHERE tile = ?", (key,))
         t.execute("INSERT INTO freq SELECT f.* FROM s.freq f JOIN site ON site.id = f.site")
         t.execute("INSERT OR REPLACE INTO path SELECT * FROM s.path_out WHERE tile = ?", (key,))
+        t.execute("INSERT INTO obstacle SELECT * FROM s.obstacle WHERE tile = ?", (key,))
         counts = {
             "asr": t.execute("SELECT count(*) FROM asr").fetchone()[0],
             "sites": t.execute("SELECT count(*) FROM site").fetchone()[0],
             "paths": t.execute("SELECT count(*) FROM path").fetchone()[0],
+            "obstacles": t.execute("SELECT count(*) FROM obstacle").fetchone()[0],
         }
         t.commit()
         t.execute("DETACH DATABASE s")
@@ -702,6 +751,7 @@ def main() -> int:
         stats[cat] = load_uls(db, z, cat)
     if not args.skip_broadcast:
         stats["broadcast"] = load_broadcast(db, args.raw)
+    dof_block = load_dof(db, args.raw)
     finalize_stage(db)
     db.close()
 
@@ -720,6 +770,8 @@ def main() -> int:
         "index": index,
         "tiles": tiles,
     }
+    if dof_block:
+        manifest["dof"] = dof_block
     if cells_block:
         manifest["cells"] = cells_block
     with open(os.path.join(args.out, "manifest.json"), "w") as f:

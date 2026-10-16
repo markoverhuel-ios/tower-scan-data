@@ -1,10 +1,10 @@
 # Data licenses
 
-This repo publishes data built from several sources. They are **not** all under the same terms.
+This repo publishes data built from several sources. (The app also looks up FAA aeronautical studies live from the FAA's OE/AAA site; nothing from that is published or stored here.) They are **not** all under the same terms.
 
 | Files | Source | License |
 |---|---|---|
-| `tile_*.sqlz`, `index.sqlz` | FCC ASR, ULS and broadcast databases | US government public data; no restrictions. Data is as filed with the FCC and may be out of date. |
+| `tile_*.sqlz` (FCC data plus the `obstacle` table), `index.sqlz` | FCC ASR, ULS and broadcast databases, and the FAA Digital Obstacle File (the `obstacle` table) | US government public data; no restrictions. FCC data is as filed and may be out of date. The FAA says the DOF covers only objects that affect aeronautical charting, not every obstruction, and that "unverified" records have unverified positions and heights. |
 | `cells.sqlz` | **OpenCellID** (<https://opencellid.org>), (c) OpenCellID contributors | **CC BY-SA 4.0** (<https://creativecommons.org/licenses/by-sa/4.0/>) |
 | `carriers.json` (code only: MCC-MNC to carrier name) | [pbakondy/mcc-mnc-list](https://github.com/pbakondy/mcc-mnc-list) | MIT |
 | `*.py`, workflow | this repo | (add a license before accepting outside contributions) |

@@ -112,6 +112,26 @@ Market-area licenses (AWS, PCS, 700 MHz blocks) have no transmitter coordinates 
   - 27 licensee
   - 35 ASR number
 
+## FAA obstacle layer (Digital Obstacle File)
+
+`dof.py` adds the FAA's [Digital Obstacle File](https://www.faa.gov/air_traffic/flight_info/aeronav/digital_products/dof/)
+(public domain; updated every 56 days) as an `obstacle` table inside each tile: ~638,000 US obstacles
+(towers, wind turbines, transmission towers, poles, buildings, stacks and more) with height, lighting, marking,
+position/height accuracy, verified or not, and the FAA **aeronautical study number**.
+
+- **Finding the file:** the build reads the FAA's DOF page for the newest `DOF_YYMMDD.zip`; if the page can't be read it
+  falls back to the 56-day cycle (anchor 2026-09-27) and checks which file exists. `DOF_URL` overrides.
+- **Linking to ASR towers** (`asr` + `match` columns): `study` when the obstacle's study number is the tower's and they're within
+  1 km (a study can cover several structures; the nearest wins), otherwise `near` when an ASR tower is within 30 m. On the first
+  run that was ~71,000 by study number and ~38,000 by position. Obstacles with no link are shown on the map as their own layer.
+- It's optional: if the FAA site can't be reached the build warns and carries on without obstacles.
+- The `manifest.json` `dof` block records the file's currency date and the link counts.
+- Format and codes are in the FAA's DOF README. `python3 -m unittest test_dof` covers parsing, study-number normalization and linking.
+
+The FAA's **aeronautical studies** themselves (case status, dates, determination letters) are *not* in this repo: the app looks them up
+live from the FAA's OE/AAA site when you open a study. That response includes the sponsor's personal contact details, so the app reads
+only structured, non-personal fields and stores nothing.
+
 ## Carrier layer (OpenCellID)
 
 `cells.py` adds an **optional** layer saying which cellular carriers are probably on each ASR tower.
@@ -162,7 +182,7 @@ updated since 2023, so a very new network code shows as "Carrier 310-xxx".
 python3 build_db.py --raw raw --work work --out out \
   --base-url "https://github.com/markoverhuel-ios/tower-scan-data/releases/download/<tag>/"
 python3 check_output.py out
-python3 -m unittest test_cells
+python3 -m unittest test_cells test_dof
 ```
 
 It needs Python 3.10+ and nothing else, and takes about 10 minutes plus about 800 MB of downloads.

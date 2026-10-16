@@ -30,6 +30,11 @@ for t in list(m["tiles"].values()) + [m["index"]]:
     if not os.path.exists(os.path.join(out, t["file"])):
         problems.append(f"missing file {t['file']}")
 
+# The FAA obstacle layer is optional too, but a half-built one isn't.
+dof = m.get("dof")
+if dof and dof.get("rows", 0) < 400_000:
+    problems.append(f"dof: only {dof.get('rows', 0):,} obstacles, expected ~630,000")
+
 # The carrier layer is optional, but if it's there it must be sane.
 cells = m.get("cells")
 if cells:
@@ -45,4 +50,5 @@ if problems:
     print("Build looks wrong, not publishing:\n  " + "\n  ".join(problems))
     sys.exit(1)
 print(f"OK: {len(m['tiles'])} tiles, counts {m['counts']}"
-      + (f", carrier rows {cells['stats']['rowsOut']:,}" if cells else ", no carrier layer"))
+      + (f", carrier rows {cells['stats']['rowsOut']:,}" if cells else ", no carrier layer")
+      + (f", {dof['rows']:,} FAA obstacles" if dof else ", no FAA obstacle layer"))
