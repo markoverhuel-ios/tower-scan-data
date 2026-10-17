@@ -109,6 +109,12 @@ CREATE TABLE freq(
   site INTEGER NOT NULL,
   mhz REAL, upper REAL, power REAL, erp REAL, cls TEXT, emis TEXT
 );
+CREATE TABLE contact(
+  kind TEXT NOT NULL,            -- 'owner' (ASR owner) | 'control' (ULS control point) | 'licensee'
+  ref INTEGER NOT NULL,          -- ASR number for 'owner', ULS usi for the others
+  label TEXT,                    -- owner / licensee name, or the control point's "City, ST"
+  phone TEXT NOT NULL            -- 10 digits, no punctuation
+);
 CREATE TABLE path(
   id INTEGER PRIMARY KEY,        -- usi*1000+path#
   call TEXT, licensee TEXT,
@@ -127,6 +133,7 @@ CREATE INDEX freq_site ON freq(site);
 CREATE INDEX path_tx ON path(tx_lat, tx_lon);
 CREATE INDEX obstacle_ll ON obstacle(lat, lon);
 CREATE INDEX obstacle_asr ON obstacle(asr);
+CREATE INDEX contact_ref ON contact(kind, ref);
 """
 
 
@@ -218,6 +225,40 @@ def clean(s: str | None) -> str | None:
     return s or None
 
 
+def clean_phone(s: str | None) -> str | None:
+    """10 digits or None. Rejects blanks and obvious placeholders (0000000000, 1111111111...)."""
+    digits = re.sub(r"\D", "", s or "")
+    if len(digits) == 11 and digits[0] == "1":
+        digits = digits[1:]
+    if len(digits) != 10 or digits[0] in "01" or len(set(digits)) == 1:
+        return None
+    return digits
+
+
+ORG_WORDS = re.compile(
+    r"\b(INC|INCORPORATED|LLC|L L C|CORP|CORPORATION|CO|COMPANY|LTD|LP|LLP|COUNTY|CITY|TOWN|TOWNSHIP|"
+    r"VILLAGE|STATE|DEPARTMENT|DEPT|DISTRICT|AUTHORITY|SCHOOLS?|UNIVERSITY|COLLEGE|HOSPITAL|"
+    r"COOPERATIVE|COOP|ASSOCIATION|ASSN|COMMISSION|BOARD|SERVICES?|TOWERS?|COMMUNICATIONS|WIRELESS|"
+    r"ELECTRIC|POWER|RAILROAD|UTILITY|UTILITIES|FIRE|POLICE|SHERIFF|PARISH|BOROUGH|TRIBE|TRIBAL)\b",
+    re.I)
+
+
+def is_organization(type_code: str | None, first: str | None, last: str | None, name: str | None) -> bool:
+    """Publish phone numbers for businesses and agencies only, never individuals.
+
+    Individual = applicant type 'I', or a first/last name on the record. A blank type code
+    is only trusted when the name reads like a business or agency.
+    """
+    if (first or "").strip() or (last or "").strip():
+        return False
+    code = (type_code or "").strip().upper()
+    if code == "I":
+        return False
+    if code:
+        return True
+    return bool(ORG_WORDS.search(name or ""))
+
+
 def tv_channel_mhz(ch: int) -> float | None:
     if 2 <= ch <= 4:
         return 57.0 + (ch - 2) * 6
@@ -284,6 +325,7 @@ def load_asr(db: sqlite3.Connection, zip_path: str) -> int:
 
     log("ASR: owners")
     owners: dict[int, tuple[str | None, str | None]] = {}
+    owner_phone: dict[int, tuple[str | None, str]] = {}
     for p in dat_rows(zip_path, "EN.dat"):
         if len(p) < 25 or p[1] != "REG" or p[5] != "O":
             continue
@@ -291,6 +333,11 @@ def load_asr(db: sqlite3.Connection, zip_path: str) -> int:
         n = usi_to_reg.get(usi)
         if n is not None:
             owners[n] = (clean(p[9]), clean(p[24]))
+            phone = clean_phone(p[14])
+            if phone and is_organization(p[6], p[10], p[12], p[9]):
+                owner_phone[n] = (clean(p[9]), phone)
+            else:
+                owner_phone.pop(n, None)
 
     rows = []
     for n, (_, p) in reg.items():
@@ -306,8 +353,10 @@ def load_asr(db: sqlite3.Connection, zip_path: str) -> int:
             clean(p[34]), clean(p[12]), tile_key(lat, lon),
         ))
     db.executemany("INSERT OR REPLACE INTO asr VALUES (" + ",".join("?" * 17) + ")", rows)
+    db.executemany("INSERT INTO contact VALUES ('owner', ?, ?, ?)",
+                   [(n, name, ph) for n, (name, ph) in owner_phone.items() if n in coords])
     db.commit()
-    log(f"ASR: {len(rows):,} structures")
+    log(f"ASR: {len(rows):,} structures, {sum(1 for n in owner_phone if n in coords):,} owner phones")
     return len(rows)
 
 
@@ -321,13 +370,19 @@ def load_uls(db: sqlite3.Connection, zip_path: str, cat: str) -> int:
 
     log(f"{name}: licensees ({len(active):,} active licenses)")
     ent: dict[int, tuple[str | None, str | None]] = {}
+    lic_phone: dict[int, tuple[str | None, str]] = {}  # organizations only
     for p in dat_rows(zip_path, "EN.dat"):
-        if len(p) < 23 or p[5] != "L" or not p[1].isdigit():
+        if len(p) < 24 or p[5] != "L" or not p[1].isdigit():
             continue
         usi = int(p[1])
         if usi in active:
             nm = clean(p[7]) or clean(" ".join(x for x in (p[8], p[9], p[10]) if x))
             ent[usi] = (nm, clean(p[22]))
+            phone = clean_phone(p[12])
+            if phone and is_organization(p[23], p[8], p[10], p[7]):
+                lic_phone[usi] = (clean(p[7]), phone)
+            else:
+                lic_phone.pop(usi, None)
 
     log(f"{name}: locations")
     keys: set[int] = set()
@@ -405,6 +460,28 @@ def load_uls(db: sqlite3.Connection, zip_path: str, cat: str) -> int:
                 batch.append((usi, int(p[6]), int(p[7]), int(p[9])))
         db.executemany("INSERT INTO rawpath VALUES (?,?,?,?)", batch)
         batch.clear()
+
+    # Contacts: the licensee's phone, and each control point's phone (where someone can
+    # shut the transmitter off). Organizations only, and only for licenses with a site.
+    with_site = {k // 1000 for k in keys}
+    rows = [("licensee", usi, nm, ph) for usi, (nm, ph) in lic_phone.items() if usi in with_site]
+    seen: set[tuple[int, str]] = set()
+    per_license: dict[int, int] = {}
+    for p in dat_rows(zip_path, "CP.dat"):
+        if len(p) < 11 or p[0] != "CP" or not p[1].isdigit():
+            continue
+        usi = int(p[1])
+        if usi not in with_site or usi not in lic_phone:
+            continue
+        phone = clean_phone(p[10])
+        if not phone or (usi, phone) in seen or per_license.get(usi, 0) >= 3:
+            continue
+        seen.add((usi, phone))
+        per_license[usi] = per_license.get(usi, 0) + 1
+        place = ", ".join(x for x in (clean(p[8]), clean(p[9])) if x) or None
+        rows.append(("control", usi, place, phone))
+    db.executemany("INSERT INTO contact VALUES (?,?,?,?)", rows)
+    log(f"{name}: {len(rows):,} contact phones ({sum(1 for r in rows if r[0] == 'control'):,} control points)")
 
     db.commit()
     return len(keys)
@@ -509,6 +586,7 @@ def finalize_stage(db: sqlite3.Connection) -> None:
           WHERE emis.site = freq.site AND abs(emis.mhz - freq.mhz) < 0.000001)
         WHERE freq.site < 4503599627370496
     """)
+    db.execute("CREATE INDEX contact_k ON contact(kind, ref)")
     log("stage: de-duplicating frequencies")
     db.execute("""
         CREATE TABLE freq2 AS
@@ -592,11 +670,16 @@ def write_tiles(stage_path: str, out_dir: str, work_dir: str) -> dict:
         t.execute("INSERT INTO freq SELECT f.* FROM s.freq f JOIN site ON site.id = f.site")
         t.execute("INSERT OR REPLACE INTO path SELECT * FROM s.path_out WHERE tile = ?", (key,))
         t.execute("INSERT INTO obstacle SELECT * FROM s.obstacle WHERE tile = ?", (key,))
+        t.execute("INSERT INTO contact SELECT DISTINCT c.* FROM s.contact c "
+                  "WHERE c.kind = 'owner' AND c.ref IN (SELECT id FROM asr)")
+        t.execute("INSERT INTO contact SELECT DISTINCT c.* FROM s.contact c "
+                  "WHERE c.kind IN ('control', 'licensee') AND c.ref IN (SELECT usi FROM site WHERE usi IS NOT NULL)")
         counts = {
             "asr": t.execute("SELECT count(*) FROM asr").fetchone()[0],
             "sites": t.execute("SELECT count(*) FROM site").fetchone()[0],
             "paths": t.execute("SELECT count(*) FROM path").fetchone()[0],
             "obstacles": t.execute("SELECT count(*) FROM obstacle").fetchone()[0],
+            "contacts": t.execute("SELECT count(*) FROM contact").fetchone()[0],
         }
         t.commit()
         t.execute("DETACH DATABASE s")

@@ -33,7 +33,7 @@ jobs:
             --base-url "https://github.com/${{ github.repository }}/releases/download/$TAG/"
 
       - name: Unit tests
-        run: python -m unittest test_dof
+        run: python -m unittest test_dof test_contacts
 
       - name: Sanity check
         run: python check_output.py out

@@ -113,6 +113,25 @@ Market-area licenses (PCS, AWS, 700 MHz, 3.5 GHz and others) have no transmitter
   - 27 licensee
   - 35 ASR number
 
+## Phone contacts (`contact` table in each tile)
+
+Public phone numbers for the people who can switch a transmitter off or answer for a tower. **Organizations only:**
+individuals' numbers are never published.
+
+| `kind` | `ref` | `label` | Source |
+|---|---|---|---|
+| `owner` | ASR number | owner name | ASR `EN` record, phone at 14 |
+| `control` | ULS usi | control point "City, ST" | ULS `CP` record (1 usi, 8 city, 9 state, 10 phone) |
+| `licensee` | ULS usi | licensee name | ULS `EN` record, phone at 12 |
+
+- `phone` is 10 digits, no punctuation. Placeholders (0000000000, 1111111111) and numbers with area codes starting 0 or 1 are dropped.
+- **Who counts as an organization** (`is_organization` in `build_db.py`): the applicant type isn't `I` (individual) and there is no
+  first or last name on the record. A blank type code is only trusted when the name reads like a business or agency (INC, LLC, COUNTY, ...).
+  An individual's own license also drops its control point numbers.
+- At most 3 control points per license, de-duplicated.
+- Not every license has a control point phone (about 20% of paging records do). The app falls back to the licensee number.
+- `python3 -m unittest test_contacts` covers the rules and runs the real loader on a synthetic FCC file.
+
 ## FAA obstacle layer (Digital Obstacle File)
 
 `dof.py` adds the FAA's [Digital Obstacle File](https://www.faa.gov/air_traffic/flight_info/aeronav/digital_products/dof/)

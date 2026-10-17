@@ -24,6 +24,10 @@ for key, minimum in MINIMUMS.items():
     got = m["counts"].get(key, 0)
     if got < minimum:
         problems.append(f"{key}: {got:,} < {minimum:,}")
+# Phone contacts (organizations only). Zero means the parsing broke, not that the FCC has none.
+contacts = sum(t.get("contacts", 0) for t in m["tiles"].values())
+if contacts < 100_000:
+    problems.append(f"contacts: {contacts:,} < 100,000")
 if len(m["tiles"]) < MIN_TILES:
     problems.append(f"tiles: {len(m['tiles'])} < {MIN_TILES}")
 for t in list(m["tiles"].values()) + [m["index"]] + ([m["areas"]] if "areas" in m else []):
@@ -44,5 +48,5 @@ if dof and dof.get("rows", 0) < 400_000:
 if problems:
     print("Build looks wrong, not publishing:\n  " + "\n  ".join(problems))
     sys.exit(1)
-print(f"OK: {len(m['tiles'])} tiles, counts {m['counts']}"
+print(f"OK: {len(m['tiles'])} tiles, {contacts:,} phone contacts, counts {m['counts']}"
       + (f", {dof['rows']:,} FAA obstacles" if dof else ", no FAA obstacle layer"))
