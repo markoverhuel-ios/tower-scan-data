@@ -28,6 +28,9 @@ for key, minimum in MINIMUMS.items():
 contacts = sum(t.get("contacts", 0) for t in m["tiles"].values())
 if contacts < 100_000:
     problems.append(f"contacts: {contacts:,} < 100,000")
+asr_keys = sum(t.get("asrKeys", 0) for t in m["tiles"].values())
+if asr_keys < 100_000:
+    problems.append(f"asr record keys: {asr_keys:,} < 100,000")
 if len(m["tiles"]) < MIN_TILES:
     problems.append(f"tiles: {len(m['tiles'])} < {MIN_TILES}")
 for t in list(m["tiles"].values()) + [m["index"]] + ([m["areas"]] if "areas" in m else []):

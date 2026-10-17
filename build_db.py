@@ -109,6 +109,10 @@ CREATE TABLE freq(
   site INTEGER NOT NULL,
   mhz REAL, upper REAL, power REAL, erp REAL, cls TEXT, emis TEXT
 );
+CREATE TABLE asr_key(
+  asr INTEGER PRIMARY KEY,       -- ASR registration number
+  regkey INTEGER NOT NULL        -- the FCC's internal key, used in asrRegistration.jsp?regKey=
+);
 CREATE TABLE contact(
   kind TEXT NOT NULL,            -- 'owner' (ASR owner) | 'control' (ULS control point) | 'licensee'
   ref INTEGER NOT NULL,          -- ASR number for 'owner', ULS usi for the others
@@ -353,6 +357,8 @@ def load_asr(db: sqlite3.Connection, zip_path: str) -> int:
             clean(p[34]), clean(p[12]), tile_key(lat, lon),
         ))
     db.executemany("INSERT OR REPLACE INTO asr VALUES (" + ",".join("?" * 17) + ")", rows)
+    db.executemany("INSERT OR REPLACE INTO asr_key VALUES (?, ?)",
+                   [(n, v[0]) for n, v in reg.items() if n in coords and v[0] > 0])
     db.executemany("INSERT INTO contact VALUES ('owner', ?, ?, ?)",
                    [(n, name, ph) for n, (name, ph) in owner_phone.items() if n in coords])
     db.commit()
@@ -670,6 +676,7 @@ def write_tiles(stage_path: str, out_dir: str, work_dir: str) -> dict:
         t.execute("INSERT INTO freq SELECT f.* FROM s.freq f JOIN site ON site.id = f.site")
         t.execute("INSERT OR REPLACE INTO path SELECT * FROM s.path_out WHERE tile = ?", (key,))
         t.execute("INSERT INTO obstacle SELECT * FROM s.obstacle WHERE tile = ?", (key,))
+        t.execute("INSERT INTO asr_key SELECT k.* FROM s.asr_key k WHERE k.asr IN (SELECT id FROM asr)")
         t.execute("INSERT INTO contact SELECT DISTINCT c.* FROM s.contact c "
                   "WHERE c.kind = 'owner' AND c.ref IN (SELECT id FROM asr)")
         t.execute("INSERT INTO contact SELECT DISTINCT c.* FROM s.contact c "
@@ -680,6 +687,7 @@ def write_tiles(stage_path: str, out_dir: str, work_dir: str) -> dict:
             "paths": t.execute("SELECT count(*) FROM path").fetchone()[0],
             "obstacles": t.execute("SELECT count(*) FROM obstacle").fetchone()[0],
             "contacts": t.execute("SELECT count(*) FROM contact").fetchone()[0],
+            "asrKeys": t.execute("SELECT count(*) FROM asr_key").fetchone()[0],
         }
         t.commit()
         t.execute("DETACH DATABASE s")

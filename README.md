@@ -132,6 +132,12 @@ individuals' numbers are never published.
 - Not every license has a control point phone (about 20% of paging records do). The app falls back to the licensee number.
 - `python3 -m unittest test_contacts` covers the rules and runs the real loader on a synthetic FCC file.
 
+## ASR record link (`asr_key` table in each tile)
+
+`asr_key(asr, regkey)` maps an ASR registration number to the FCC's internal key (RA record, field 4), which is what the
+FCC's own page needs: `https://wireless2.fcc.gov/UlsApp/AsrSearch/asrRegistration.jsp?regKey=<regkey>`. The registration
+number itself does not work in that URL, and the FCC's search form only accepts POST, so a plain link needs this key.
+
 ## FAA obstacle layer (Digital Obstacle File)
 
 `dof.py` adds the FAA's [Digital Obstacle File](https://www.faa.gov/air_traffic/flight_info/aeronav/digital_products/dof/)
