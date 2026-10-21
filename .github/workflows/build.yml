@@ -64,6 +64,46 @@ jobs:
           upload out/manifest.json
           gh release edit "$TAG" --draft=false --latest
 
+      - name: Publish to Cloudflare R2
+        # Same build, served from data.freshcoastrf.com. Tiles go to builds/<tag>/;
+        # latest/manifest.json is written last so the app never sees a partial set.
+        # GitHub Releases above stay as the source for older app versions.
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          R2_ENDPOINT: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+          R2_BUCKET: tower-scan-data
+          R2_PUBLIC: https://data.freshcoastrf.com
+        run: |
+          mkdir -p r2
+          python - <<'EOF'
+          import json, os
+          m = json.load(open("out/manifest.json"))
+          m["baseURL"] = f"{os.environ['R2_PUBLIC']}/builds/{os.environ['TAG']}/"
+          json.dump(m, open("r2/manifest.json", "w"), separators=(",", ":"))
+          EOF
+          aws s3 cp out/ "s3://$R2_BUCKET/builds/$TAG/" --recursive --exclude "*" --include "*.sqlz" \
+            --endpoint-url "$R2_ENDPOINT" --cache-control "public, max-age=31536000, immutable"
+          aws s3 cp r2/manifest.json "s3://$R2_BUCKET/builds/$TAG/manifest.json" --endpoint-url "$R2_ENDPOINT"
+          aws s3 cp r2/manifest.json "s3://$R2_BUCKET/latest/manifest.json" \
+            --endpoint-url "$R2_ENDPOINT" --cache-control "public, max-age=300" --content-type application/json
+
+      - name: Prune old R2 builds (keep 3)
+        continue-on-error: true
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          R2_ENDPOINT: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+          R2_BUCKET: tower-scan-data
+        run: |
+          aws s3 ls "s3://$R2_BUCKET/builds/" --endpoint-url "$R2_ENDPOINT" |
+            awk '{print $2}' | sed 's#/$##' | sort | head -n -3 |
+          while read -r tag; do
+            aws s3 rm "s3://$R2_BUCKET/builds/$tag/" --recursive --endpoint-url "$R2_ENDPOINT"
+          done
+
       - name: Prune old releases (keep 3)
         # Housekeeping only: GitHub sometimes answers 502 when deleting a release
         # with hundreds of files. That must not mark a successful publish as failed.
