@@ -72,10 +72,16 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION: auto
-          R2_ENDPOINT: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
           R2_BUCKET: tower-scan-data
           R2_PUBLIC: https://data.freshcoastrf.com
         run: |
+          # Trim stray spaces/newlines from the pasted secret and check it looks like an account ID.
+          ACCT="$(printf '%s' "$R2_ACCOUNT_ID" | tr -d '[:space:]')"
+          if ! [[ "$ACCT" =~ ^[0-9a-f]{32}$ ]]; then
+            echo "::error::R2_ACCOUNT_ID should be the 32-character hex Account ID (got ${#ACCT} characters)"; exit 1
+          fi
+          R2_ENDPOINT="https://$ACCT.r2.cloudflarestorage.com"
           mkdir -p r2
           python - <<'EOF'
           import json, os
@@ -95,9 +101,10 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION: auto
-          R2_ENDPOINT: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
           R2_BUCKET: tower-scan-data
         run: |
+          R2_ENDPOINT="https://$(printf '%s' "$R2_ACCOUNT_ID" | tr -d '[:space:]').r2.cloudflarestorage.com"
           aws s3 ls "s3://$R2_BUCKET/builds/" --endpoint-url "$R2_ENDPOINT" |
             awk '{print $2}' | sed 's#/$##' | sort | head -n -3 |
           while read -r tag; do
