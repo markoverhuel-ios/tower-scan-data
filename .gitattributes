@@ -1,0 +1,40 @@
+* text=auto
+*.swift text eol=lf
+*.m text eol=lf
+*.h text eol=lf
+*.plist text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.sh text eol=lf
+*.py text eol=lf
+*.js text eol=lf
+*.html text eol=lf
+*.css text eol=lf
+*.pbxproj text eol=lf
+*.xcconfig text eol=lf
+*.strings text eol=lf
+*.storekit text eol=lf
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.pdf binary
+*.docx binary
+*.xlsx binary
+*.xlsm binary
+*.stl binary
+*.3mf binary
+*.ico binary
+*.icns binary
+*.zip binary
+*.ttf binary
+*.otf binary
+*.mp4 binary
+*.mov binary
+*.sqlite binary
+*.db binary
