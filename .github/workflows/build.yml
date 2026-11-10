@@ -95,6 +95,27 @@ jobs:
           aws s3 cp r2/manifest.json "s3://$R2_BUCKET/latest/manifest.json" \
             --endpoint-url "$R2_ENDPOINT" --cache-control "public, max-age=300" --content-type application/json
 
+      - name: Publish slim ASR file to R2 (FRN Dashboard)
+        # FRN Dashboard reads only EN, RA and CO from the FCC's r_tower.zip. Serve those three
+        # files from R2 (same format, ~1/3 the size) so devices don't each pull the FCC's file.
+        # The app falls back to data.fcc.gov if this is missing, so a failure here is not fatal.
+        continue-on-error: true
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_BUCKET: tower-scan-data
+        run: |
+          R2_ENDPOINT="https://$(printf '%s' "$R2_ACCOUNT_ID" | tr -d '[:space:]').r2.cloudflarestorage.com"
+          mkdir -p asr_slim && cd asr_slim
+          unzip -o -j ../raw/r_tower.zip EN.dat RA.dat CO.dat
+          for f in EN.dat RA.dat CO.dat; do test -s "$f" || { echo "::error::$f missing or empty"; exit 1; }; done
+          zip -9 r_tower.zip EN.dat RA.dat CO.dat
+          ls -l r_tower.zip
+          aws s3 cp r_tower.zip "s3://$R2_BUCKET/frn/r_tower.zip" \
+            --endpoint-url "$R2_ENDPOINT" --cache-control "public, max-age=86400" --content-type application/zip
+
       - name: Prune old R2 builds (keep 3)
         continue-on-error: true
         env:
