@@ -33,7 +33,7 @@ jobs:
             --base-url "https://github.com/${{ github.repository }}/releases/download/$TAG/"
 
       - name: Unit tests
-        run: python -m unittest test_dof test_contacts
+        run: python -m unittest test_dof test_contacts test_lic_detail
 
       - name: Sanity check
         run: python check_output.py out
@@ -115,6 +115,22 @@ jobs:
           ls -l r_tower.zip
           aws s3 cp r_tower.zip "s3://$R2_BUCKET/frn/r_tower.zip" \
             --endpoint-url "$R2_ENDPOINT" --cache-control "public, max-age=86400" --content-type application/zip
+
+      - name: Publish per-license detail to R2 (FRN Dashboard)
+        # Frequencies + locations per license, sharded by usi // 1000 (see lic_detail.py). The FRN
+        # Dashboard reads these instead of scraping wireless2.fcc.gov, which answers apps with HTTP 403.
+        # Apps fall back to the live FCC page for any license missing here, so a failure is not fatal.
+        continue-on-error: true
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_BUCKET: tower-scan-data
+        run: |
+          R2_ENDPOINT="https://$(printf '%s' "$R2_ACCOUNT_ID" | tr -d '[:space:]').r2.cloudflarestorage.com"
+          python lic_detail.py --raw raw --work work --out out_lic
+          aws s3 cp out_lic/ "s3://$R2_BUCKET/frn/lic/" --recursive --endpoint-url "$R2_ENDPOINT"             --content-type application/json --content-encoding gzip --cache-control "public, max-age=86400"
 
       - name: Prune old R2 builds (keep 3)
         continue-on-error: true
